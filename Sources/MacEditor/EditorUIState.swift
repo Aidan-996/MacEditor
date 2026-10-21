@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 final class EditorUIState: ObservableObject {
     @Published var softWrap: Bool = UserDefaults.standard.object(forKey: "softWrapDefault") as? Bool ?? true
     @Published var showPreview = true
-    @Published var showSidebar = false
+    @Published var showSidebar = !WorkspaceStore.shared.roots.isEmpty
     @Published var showGoToLine = false
     @Published var cursor = CursorPosition()
     /// nil = automatic (extension, then content sniffing)
@@ -14,10 +14,10 @@ final class EditorUIState: ObservableObject {
     @Published var detectedLanguage: Language = .plain
     @Published var wordCount = 0
     @Published var charCount = 0
-    @Published var folderRoot: FileNode? = nil
 
-    /// Folder chosen via ⇧⌘O while no window was open; consumed by the next window.
-    static var pendingFolder: URL?
+    private var countWork: DispatchWorkItem?
+    /// Set by ⇧⌘O when no window was open; the next window shows its sidebar.
+    static var pendingShowSidebar = false
 
     weak var textView: CodeTextView?
     var fileURL: URL?
@@ -25,36 +25,33 @@ final class EditorUIState: ObservableObject {
 
     private var detectWork: DispatchWorkItem?
 
-    /// Debounced: language sniffing + word/char counts.
-    func scheduleAnalysis(_ text: String, sniff: Bool, immediate: Bool = false) {
+    /// Debounced language sniffing.
+    func scheduleDetect(_ text: String, immediate: Bool = false) {
         detectWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            if sniff {
-                let lang = Language.detect(content: text)
-                if self.detectedLanguage != lang { self.detectedLanguage = lang }
-            }
-            var words = 0
-            text.enumerateSubstrings(in: text.startIndex..<text.endIndex, options: [.byWords, .substringNotRequired]) { _, _, _, _ in
-                words += 1
-            }
-            self.wordCount = words
-            self.charCount = text.count
+            let lang = Language.detect(content: text)
+            if self.detectedLanguage != lang { self.detectedLanguage = lang }
         }
         detectWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + (immediate ? 0 : 0.5), execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + (immediate ? 0 : 0.6), execute: work)
+    }
+
+    /// Debounced word / character counts.
+    func updateCounts(_ text: String, immediate: Bool = false) {
+        countWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            let (w, c) = TextStats.count(text)
+            if self.wordCount != w { self.wordCount = w }
+            if self.charCount != c { self.charCount = c }
+        }
+        countWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (immediate ? 0 : 0.25), execute: work)
     }
 
     func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = L10n.t("openFolder")
-        if panel.runModal() == .OK, let url = panel.url {
-            folderRoot = FileNode(url: url)
-            showSidebar = true
-        }
+        if WorkspaceStore.shared.chooseFolders() { showSidebar = true }
     }
 
     func goTo(line: Int) {
@@ -97,5 +94,36 @@ final class EditorUIState: ObservableObject {
             alert.addButton(withTitle: L10n.t("ok"))
             alert.runModal()
         }
+    }
+}
+
+enum TextStats {
+    static func isCJK(_ v: UInt32) -> Bool {
+        switch v {
+        case 0x3040...0x30FF, 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xAC00...0xD7AF,
+             0xF900...0xFAFF, 0xFF66...0xFF9F, 0x20000...0x2FA1F:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// chars = number of Characters (grapheme clusters, newlines included);
+    /// words = each CJK character counts as one word, plus runs of other letters/digits.
+    static func count(_ text: String) -> (words: Int, chars: Int) {
+        var words = 0
+        var inRun = false
+        let alnum = CharacterSet.alphanumerics
+        for scalar in text.unicodeScalars {
+            if isCJK(scalar.value) {
+                words += 1
+                inRun = false
+            } else if alnum.contains(scalar) || scalar == "_" || scalar == "'" && inRun {
+                if !inRun { words += 1; inRun = true }
+            } else {
+                inRun = false
+            }
+        }
+        return (words, text.count)
     }
 }

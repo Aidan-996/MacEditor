@@ -42,6 +42,8 @@ enum L10n {
         "langSystem": "Follow System", "cancel": "Cancel", "go": "Go",
         "goToLinePrompt": "Line number (1–%ld):", "exportFailed": "Export failed",
         "noFolder": "No folder open", "chooseFolder": "Open Folder…", "folderEmpty": "Empty folder",
+        "workspace": "Workspace", "addFolder": "Add Folder to Workspace…", "removeFolder": "Remove Folder from Workspace",
+        "revealInFinder": "Reveal in Finder", "refresh": "Refresh",
         "ok": "OK", "editor": "Editor", "general": "General",
     ]
 
@@ -63,6 +65,8 @@ enum L10n {
         "langSystem": "跟随系统", "cancel": "取消", "go": "跳转",
         "goToLinePrompt": "行号（1–%ld）：", "exportFailed": "导出失败",
         "noFolder": "未打开文件夹", "chooseFolder": "打开文件夹…", "folderEmpty": "空文件夹",
+        "workspace": "工作区", "addFolder": "将文件夹添加到工作区…", "removeFolder": "从工作区移除文件夹",
+        "revealInFinder": "在访达中显示", "refresh": "刷新",
         "ok": "好", "editor": "编辑器", "general": "通用",
     ]
 }

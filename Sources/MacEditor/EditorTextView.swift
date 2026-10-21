@@ -13,8 +13,8 @@ struct EditorTextView: NSViewRepresentable {
     var fontSize: CGFloat
     var tabWidth: Int
     var softWrap: Bool
-    var onCursorChange: (CursorPosition) -> Void
-    var onReady: (CodeTextView) -> Void = { _ in }
+    /// Per-window state; the coordinator pushes cursor position and counts straight into it.
+    var ui: EditorUIState
 
     static let lineHeightMultiple: CGFloat = 1.4
 
@@ -75,7 +75,9 @@ struct EditorTextView: NSViewRepresentable {
         c.applyAppearance(force: true)
         c.applyWrap(softWrap)
         c.highlightAll()
-        onReady(tv)
+        ui.textView = tv
+        c.reportCursor()
+        ui.updateCounts(text, immediate: true)
         DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
         return scrollView
     }
@@ -92,7 +94,10 @@ struct EditorTextView: NSViewRepresentable {
             let loc = min(selection.location, (text as NSString).length)
             tv.setSelectedRange(NSRange(location: loc, length: 0))
             c.highlightAll()
+            c.reportCursor()
+            ui.updateCounts(text)
         }
+        if ui.textView !== tv { ui.textView = tv }
         c.applyAppearance(force: false)
         if c.lastWrap != softWrap { c.applyWrap(softWrap) }
     }
@@ -188,6 +193,8 @@ struct EditorTextView: NSViewRepresentable {
             // 中文等输入法组字期间（marked text）不同步、不上色，否则会打断组字
             if tv.hasMarkedText() { return }
             parent.text = tv.string
+            reportCursor()
+            parent.ui.updateCounts(tv.string)
 
             // 1) Immediately re-highlight the lines around the caret (cheap; keeps typing smooth).
             let ns = tv.string as NSString
@@ -209,6 +216,12 @@ struct EditorTextView: NSViewRepresentable {
             tv.updateBracketMatch()
             tv.setNeedsDisplay(tv.visibleRect)   // current-line highlight
             ruler?.needsDisplay = true
+            reportCursor()
+        }
+
+        /// Computes caret line/column and publishes it to the window's EditorUIState.
+        func reportCursor() {
+            guard let tv = textView else { return }
             let ns = tv.string as NSString
             let loc = min(tv.selectedRange().location, ns.length)
             var line = 1
@@ -219,7 +232,10 @@ struct EditorTextView: NSViewRepresentable {
                 i += 1
             }
             let pos = CursorPosition(line: line, column: loc - lineStart + 1)
-            DispatchQueue.main.async { [weak self] in self?.parent.onCursorChange(pos) }
+            let state = parent.ui
+            DispatchQueue.main.async {
+                if state.cursor != pos { state.cursor = pos }
+            }
         }
     }
 }

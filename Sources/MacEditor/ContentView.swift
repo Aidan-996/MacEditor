@@ -65,15 +65,16 @@ struct ContentView: View {
         .focusedSceneValue(\.uiState, ui)
         .onAppear {
             ui.fileURL = fileURL
-            if let pending = EditorUIState.pendingFolder {
-                EditorUIState.pendingFolder = nil
-                ui.folderRoot = FileNode(url: pending)
+            if EditorUIState.pendingShowSidebar {
+                EditorUIState.pendingShowSidebar = false
                 ui.showSidebar = true
             }
-            ui.scheduleAnalysis(document.text, sniff: true, immediate: true)
+            ui.scheduleDetect(document.text, immediate: true)
+            ui.updateCounts(document.text, immediate: true)
         }
         .onChange(of: document.text) { newValue in
-            ui.scheduleAnalysis(newValue, sniff: extensionLanguage == .plain)
+            if extensionLanguage == .plain { ui.scheduleDetect(newValue) }
+            ui.updateCounts(newValue)
         }
         .onChange(of: fileURL) { newValue in ui.fileURL = newValue }
     }
@@ -98,13 +99,7 @@ struct ContentView: View {
     private var editor: some View {
         let state = ui
         return EditorTextView(text: $document.text, language: language, theme: theme, fontSize: CGFloat(fontSize),
-                              tabWidth: tabWidth, softWrap: ui.softWrap,
-                              onCursorChange: { pos in
-                                  if state.cursor != pos { state.cursor = pos }
-                              },
-                              onReady: { tv in
-                                  state.textView = tv
-                              })
+                              tabWidth: tabWidth, softWrap: ui.softWrap, ui: state)
             .onAppear { state.currentLanguage = language }
             .onChange(of: language) { newValue in state.currentLanguage = newValue }
     }

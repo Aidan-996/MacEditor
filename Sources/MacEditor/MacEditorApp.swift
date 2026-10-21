@@ -22,14 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// ⇧⌘O with no window open: pick a folder, then open an untitled window that shows it.
+    /// ⇧⌘O with no window open: add folders to the workspace, then open a window showing the sidebar.
     static func openFolderInNewWindow() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.prompt = L10n.t("openFolder")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        EditorUIState.pendingFolder = url
+        guard WorkspaceStore.shared.chooseFolders() else { return }
+        EditorUIState.pendingShowSidebar = true
         NSDocumentController.shared.newDocument(nil)
     }
 }
