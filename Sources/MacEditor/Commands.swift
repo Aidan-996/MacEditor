@@ -56,9 +56,15 @@ struct EditorCommands: Commands {
                 .keyboardShortcut("f", modifiers: .command)
             Button(t("findReplace")) { sendFinderAction(.showReplaceInterface) }
                 .keyboardShortcut("f", modifiers: [.command, .option])
-            Button(t("findNext")) { sendFinderAction(.nextMatch) }
+            Button(t("findNext")) {
+                sendFinderAction(.nextMatch)
+                refreshFindLabel()
+            }
                 .keyboardShortcut("g", modifiers: .command)
-            Button(t("findPrev")) { sendFinderAction(.previousMatch) }
+            Button(t("findPrev")) {
+                sendFinderAction(.previousMatch)
+                refreshFindLabel()
+            }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
             Button(t("useSelection")) { sendFinderAction(.setSearchString) }
                 .keyboardShortcut("e", modifiers: .command)
@@ -68,6 +74,18 @@ struct EditorCommands: Commands {
             }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .disabled(ui == nil)
+            Divider()
+            Button(t("selectNextOccurrence")) { sendEditorAction(#selector(CodeTextView.selectNextOccurrence(_:))) }
+                .keyboardShortcut("d", modifiers: .command)
+            Button(t("addCursorBelow")) { sendEditorAction(#selector(CodeTextView.addCursorBelow(_:))) }
+                .keyboardShortcut(.downArrow, modifiers: [.control, .shift])
+            Button(t("addCursorAbove")) { sendEditorAction(#selector(CodeTextView.addCursorAbove(_:))) }
+                .keyboardShortcut(.upArrow, modifiers: [.control, .shift])
+            Divider()
+            Button(t("fold")) { sendEditorAction(#selector(CodeTextView.foldCurrent(_:))) }
+                .keyboardShortcut("[", modifiers: [.command, .option])
+            Button(t("unfoldAll")) { sendEditorAction(#selector(CodeTextView.unfoldAll(_:))) }
+                .keyboardShortcut("]", modifiers: [.command, .option])
             Divider()
             Button(t("goToLine")) { ui?.showGoToLine = true }
                 .keyboardShortcut("l", modifiers: .command)
@@ -85,6 +103,9 @@ struct EditorCommands: Commands {
             Button(t("toggleSidebar")) { ui?.showSidebar.toggle() }
                 .keyboardShortcut("s", modifiers: [.command, .control])
                 .disabled(ui == nil)
+            Button(t("toggleOutline")) { ui?.showOutline.toggle() }
+                .keyboardShortcut("b", modifiers: [.command, .shift])
+                .disabled(ui == nil)
             Button(t("toggleSoftWrap")) {
                 if let v = softWrap { softWrap = !v }
             }
@@ -95,7 +116,19 @@ struct EditorCommands: Commands {
             }
             .keyboardShortcut("p", modifiers: [.command, .shift])
             .disabled(showPreview == nil)
+            Button(t("toggleInvisibles")) { ui?.showInvisibles.toggle() }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(ui == nil)
+            Button(t("toggleIndentGuides")) { ui?.showIndentGuides.toggle() }
+                .disabled(ui == nil)
             Divider()
+        }
+    }
+
+    private func refreshFindLabel() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            guard let ui = ui, let tv = ui.textView else { return }
+            ui.updateFindMatchStatus(text: tv.string, caret: tv.selectedRange().location)
         }
     }
 }

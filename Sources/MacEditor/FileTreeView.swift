@@ -314,6 +314,8 @@ struct FindInFilesHit: Identifiable {
 
 final class FindInFilesModel: ObservableObject {
     @Published var query = ""
+    @Published var useRegex = false
+    @Published var caseSensitive = false
     @Published var results: [FindInFilesHit] = []
     @Published var isSearching = false
     @Published var status = ""
@@ -321,7 +323,7 @@ final class FindInFilesModel: ObservableObject {
 
     func search() {
         workItem?.cancel()
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let q = query
         guard !q.isEmpty else {
             results = []
             status = ""
@@ -330,8 +332,10 @@ final class FindInFilesModel: ObservableObject {
         isSearching = true
         status = L10n.t("searching")
         let roots = WorkspaceStore.shared.roots.map { $0.url }
+        let regex = useRegex
+        let caseSens = caseSensitive
         let work = DispatchWorkItem { [weak self] in
-            let hits = WorkspaceSearch.search(query: q, roots: roots)
+            let hits = WorkspaceSearch.search(query: q, roots: roots, regex: regex, caseSensitive: caseSens)
             DispatchQueue.main.async {
                 guard let self = self, !(self.workItem?.isCancelled ?? true) else { return }
                 self.results = hits
@@ -351,9 +355,18 @@ enum WorkspaceSearch {
         "sh", "bash", "zsh", "xml", "plist", "yml", "yaml", "toml", "log", "text",
     ]
 
-    static func search(query: String, roots: [URL], maxHits: Int = 200) -> [FindInFilesHit] {
+    static func search(query: String, roots: [URL], regex: Bool, caseSensitive: Bool, maxHits: Int = 200) -> [FindInFilesHit] {
         var hits: [FindInFilesHit] = []
         let fm = FileManager.default
+        let re: NSRegularExpression?
+        if regex {
+            var opts: NSRegularExpression.Options = []
+            if !caseSensitive { opts.insert(.caseInsensitive) }
+            re = try? NSRegularExpression(pattern: query, options: opts)
+            if re == nil { return [] }
+        } else {
+            re = nil
+        }
         for root in roots {
             guard let enumerator = fm.enumerator(
                 at: root,
@@ -374,10 +387,20 @@ enum WorkspaceSearch {
                 guard let data = try? Data(contentsOf: url), data.count < 2_000_000 else { continue }
                 let (text, _) = TextDocument.decode(data, pathExtension: ext)
                 let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-                for (idx, line) in lines.enumerated() {
+                for (idx, lineSub) in lines.enumerated() {
                     if hits.count >= maxHits { return hits }
-                    if line.localizedCaseInsensitiveContains(query) {
-                        let snippet = String(line).trimmingCharacters(in: .whitespaces)
+                    let line = String(lineSub)
+                    let matched: Bool
+                    if let re = re {
+                        let range = NSRange(location: 0, length: (line as NSString).length)
+                        matched = re.firstMatch(in: line, options: [], range: range) != nil
+                    } else if caseSensitive {
+                        matched = line.contains(query)
+                    } else {
+                        matched = line.localizedCaseInsensitiveContains(query)
+                    }
+                    if matched {
+                        let snippet = line.trimmingCharacters(in: .whitespaces)
                         let clipped = snippet.count > 160 ? String(snippet.prefix(160)) + "…" : snippet
                         hits.append(FindInFilesHit(url: url, line: idx + 1, snippet: clipped))
                     }
@@ -405,8 +428,13 @@ struct FindInFilesSheet: View {
                     .onSubmit { model.search() }
                 Button(t("search")) { model.search() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(model.query.isEmpty)
             }
+            HStack(spacing: 16) {
+                Toggle(t("useRegex"), isOn: $model.useRegex)
+                Toggle(t("caseSensitive"), isOn: $model.caseSensitive)
+            }
+            .toggleStyle(.checkbox)
             if !model.status.isEmpty {
                 Text(model.status)
                     .font(.caption)
@@ -420,6 +448,10 @@ struct FindInFilesSheet: View {
                         .font(.system(size: 11).monospaced())
                         .foregroundColor(.secondary)
                         .lineLimit(2)
+                    Text(hit.url.path)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { open(hit) }
@@ -432,11 +464,23 @@ struct FindInFilesSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 560, height: 420)
+        .frame(width: 600, height: 460)
     }
 
     private func open(_ hit: FindInFilesHit) {
         ui.showFindInFiles = false
-        NSDocumentController.shared.openDocument(withContentsOf: hit.url, display: true) { _, _, _ in }
+        EditorUIState.pendingGoTo = (hit.url, hit.line)
+        NSDocumentController.shared.openDocument(withContentsOf: hit.url, display: true) { _, alreadyOpen, _ in
+            // If already open in this window, consume pending go-to immediately.
+            if alreadyOpen {
+                DispatchQueue.main.async {
+                    ui.consumePendingGoTo(matching: hit.url)
+                    // Also try goTo directly for the focused window.
+                    if ui.fileURL?.standardizedFileURL == hit.url.standardizedFileURL {
+                        ui.goTo(line: hit.line)
+                    }
+                }
+            }
+        }
     }
 }

@@ -13,6 +13,8 @@ struct EditorTextView: NSViewRepresentable {
     var fontSize: CGFloat
     var tabWidth: Int
     var softWrap: Bool
+    var showInvisibles: Bool
+    var showIndentGuides: Bool
     /// Per-window state; the coordinator pushes cursor position and counts straight into it.
     var ui: EditorUIState
 
@@ -29,7 +31,6 @@ struct EditorTextView: NSViewRepresentable {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = true
 
-        // TextKit 1 stack (needed for NSLayoutManager-based gutter).
         let contentSize = scrollView.contentSize
         let storage = NSTextStorage()
         let layoutManager = NSLayoutManager()
@@ -61,6 +62,8 @@ struct EditorTextView: NSViewRepresentable {
         tv.drawsBackground = true
         tv.delegate = context.coordinator
         tv.string = text
+        tv.showInvisibles = showInvisibles
+        tv.showIndentGuides = showIndentGuides
 
         scrollView.documentView = tv
         let ruler = LineNumberRulerView(textView: tv, scrollView: scrollView)
@@ -75,9 +78,11 @@ struct EditorTextView: NSViewRepresentable {
         c.applyAppearance(force: true)
         c.applyWrap(softWrap)
         c.highlightAll()
+        tv.rebuildFolds()
         ui.textView = tv
         c.reportCursor()
         ui.updateCounts(text, immediate: true)
+        ui.scheduleOutline(text, language: language, immediate: true)
         DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
         return scrollView
     }
@@ -86,7 +91,7 @@ struct EditorTextView: NSViewRepresentable {
         let c = context.coordinator
         c.parent = self
         guard let tv = c.textView else { return }
-        if tv.hasMarkedText() { return }   // 输入法正在组字时不要动文本
+        if tv.hasMarkedText() { return }
         if tv.string != text {
             let selection = tv.selectedRange()
             tv.string = text
@@ -94,8 +99,15 @@ struct EditorTextView: NSViewRepresentable {
             let loc = min(selection.location, (text as NSString).length)
             tv.setSelectedRange(NSRange(location: loc, length: 0))
             c.highlightAll()
+            tv.rebuildFolds()
             c.reportCursor()
             ui.updateCounts(text)
+            ui.scheduleOutline(text, language: language)
+        }
+        if tv.showInvisibles != showInvisibles || tv.showIndentGuides != showIndentGuides {
+            tv.showInvisibles = showInvisibles
+            tv.showIndentGuides = showIndentGuides
+            tv.needsDisplay = true
         }
         if ui.textView !== tv { ui.textView = tv }
         c.applyAppearance(force: false)
@@ -114,6 +126,7 @@ struct EditorTextView: NSViewRepresentable {
         private var lastLanguage: Language?
         private var lastTheme: Theme?
         private var pendingHighlight: DispatchWorkItem?
+        private var pendingFolds: DispatchWorkItem?
         private(set) var paragraph = NSParagraphStyle()
 
         init(_ parent: EditorTextView) { self.parent = parent }
@@ -148,6 +161,8 @@ struct EditorTextView: NSViewRepresentable {
             tv.selectedTextAttributes = [.backgroundColor: theme.ns(\.selection)]
             tv.currentLineColor = theme.ns(\.currentLine)
             tv.bracketColor = theme.ns(\.bracket)
+            tv.indentGuideColor = Theme.ns(theme.gutterText, alpha: 0.35)
+            tv.invisibleColor = Theme.ns(theme.gutterText, alpha: 0.55)
             tv.typingAttributes = [.font: f, .foregroundColor: theme.ns(\.text), .paragraphStyle: style]
             scrollView?.backgroundColor = theme.ns(\.background)
             scrollView?.scrollerKnobStyle = theme.isDark ? .light : .dark
@@ -184,42 +199,45 @@ struct EditorTextView: NSViewRepresentable {
             ruler?.needsDisplay = true
         }
 
-        // MARK: NSTextViewDelegate
-
         func undoManager(for view: NSTextView) -> UndoManager? { undo }
 
         func textDidChange(_ notification: Notification) {
             guard let tv = textView, let storage = tv.textStorage else { return }
-            // 中文等输入法组字期间（marked text）不同步、不上色，否则会打断组字
             if tv.hasMarkedText() { return }
             parent.text = tv.string
             reportCursor()
             parent.ui.updateCounts(tv.string)
+            parent.ui.scheduleOutline(tv.string, language: parent.language)
 
-            // 1) Immediately re-highlight the lines around the caret (cheap; keeps typing smooth).
             let ns = tv.string as NSString
             let caret = min(tv.selectedRange().location, ns.length)
             let local = ns.lineRange(for: NSRange(location: caret, length: 0))
             Highlighter.highlight(storage, language: parent.language, theme: parent.theme, font: font,
                                   paragraph: paragraph, in: local)
 
-            // 2) Debounced full pass for multi-line constructs (block comments, fences, <style>, ...).
             pendingHighlight?.cancel()
             let work = DispatchWorkItem { [weak self] in self?.highlightAll() }
             pendingHighlight = work
             let delay = ns.length > 200_000 ? 0.8 : 0.3
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+
+            pendingFolds?.cancel()
+            let foldWork = DispatchWorkItem { [weak self] in
+                self?.textView?.rebuildFolds()
+                self?.ruler?.needsDisplay = true
+            }
+            pendingFolds = foldWork
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: foldWork)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let tv = textView else { return }
             tv.updateBracketMatch()
-            tv.setNeedsDisplay(tv.visibleRect)   // current-line highlight
+            tv.setNeedsDisplay(tv.visibleRect)
             ruler?.needsDisplay = true
             reportCursor()
         }
 
-        /// Computes caret line/column and publishes it to the window's EditorUIState.
         func reportCursor() {
             guard let tv = textView else { return }
             let ns = tv.string as NSString
@@ -233,8 +251,10 @@ struct EditorTextView: NSViewRepresentable {
             }
             let pos = CursorPosition(line: line, column: loc - lineStart + 1)
             let state = parent.ui
+            let text = tv.string
             DispatchQueue.main.async {
                 if state.cursor != pos { state.cursor = pos }
+                state.updateFindMatchStatus(text: text, caret: loc)
             }
         }
     }

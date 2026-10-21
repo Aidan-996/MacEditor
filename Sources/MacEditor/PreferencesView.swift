@@ -7,6 +7,7 @@ struct PreferencesView: View {
     @AppStorage("theme") private var theme: String = "auto"
     @AppStorage("autosaveEnabled") private var autosaveEnabled: Bool = false
     @AppStorage("uiLanguage") private var uiLanguage: String = "system"
+    @AppStorage("showIndentGuides") private var showIndentGuides: Bool = true
 
     private func t(_ key: String) -> String { L10n.t(key, uiLanguage) }
 
@@ -30,6 +31,7 @@ struct PreferencesView: View {
                 Text(L10n.f("tabWidth", uiLanguage, tabWidth))
             }
             Toggle(t("softWrapDefault"), isOn: $softWrapDefault)
+            Toggle(t("indentGuides"), isOn: $showIndentGuides)
             Toggle(t("autosave"), isOn: $autosaveEnabled)
         }
         .padding(20)
