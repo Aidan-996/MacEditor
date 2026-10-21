@@ -84,6 +84,7 @@ struct EditorTextView: NSViewRepresentable {
         let c = context.coordinator
         c.parent = self
         guard let tv = c.textView else { return }
+        if tv.hasMarkedText() { return }   // 输入法正在组字时不要动文本
         if tv.string != text {
             let selection = tv.selectedRange()
             tv.string = text
@@ -173,6 +174,7 @@ struct EditorTextView: NSViewRepresentable {
 
         func highlightAll() {
             guard let tv = textView, let storage = tv.textStorage else { return }
+            if tv.hasMarkedText() { return }
             Highlighter.highlight(storage, language: parent.language, theme: parent.theme, font: font, paragraph: paragraph)
             ruler?.needsDisplay = true
         }
@@ -183,6 +185,8 @@ struct EditorTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let tv = textView, let storage = tv.textStorage else { return }
+            // 中文等输入法组字期间（marked text）不同步、不上色，否则会打断组字
+            if tv.hasMarkedText() { return }
             parent.text = tv.string
 
             // 1) Immediately re-highlight the lines around the caret (cheap; keeps typing smooth).
