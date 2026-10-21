@@ -8,6 +8,7 @@ final class EditorUIState: ObservableObject {
     @Published var showPreview = true
     @Published var showSidebar = !WorkspaceStore.shared.roots.isEmpty
     @Published var showGoToLine = false
+    @Published var showFindInFiles = false
     @Published var cursor = CursorPosition()
     /// nil = automatic (extension, then content sniffing)
     @Published var languageOverride: Language? = nil

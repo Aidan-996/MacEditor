@@ -45,6 +45,11 @@ enum L10n {
         "workspace": "Workspace", "addFolder": "Add Folder to Workspace…", "removeFolder": "Remove Folder from Workspace",
         "revealInFinder": "Reveal in Finder", "refresh": "Refresh",
         "ok": "OK", "editor": "Editor", "general": "General",
+        "encoding": "Encoding", "reopenWithEncoding": "Reopen with Encoding",
+        "encUTF8": "UTF-8", "encGB18030": "GB18030", "encISO88591": "ISO-8859-1", "encUTF16": "UTF-16",
+        "findInFiles": "Find in Files…", "searchPlaceholder": "Search in workspace folders",
+        "search": "Search", "noResults": "No results", "resultsCount": "%ld results",
+        "searching": "Searching…",
     ]
 
     static let zh: [String: String] = [
@@ -68,5 +73,10 @@ enum L10n {
         "workspace": "工作区", "addFolder": "将文件夹添加到工作区…", "removeFolder": "从工作区移除文件夹",
         "revealInFinder": "在访达中显示", "refresh": "刷新",
         "ok": "好", "editor": "编辑器", "general": "通用",
+        "encoding": "编码", "reopenWithEncoding": "以编码重新打开",
+        "encUTF8": "UTF-8", "encGB18030": "GB18030", "encISO88591": "ISO-8859-1", "encUTF16": "UTF-16",
+        "findInFiles": "在文件夹中查找…", "searchPlaceholder": "在工作区文件夹中搜索",
+        "search": "搜索", "noResults": "无结果", "resultsCount": "%ld 条结果",
+        "searching": "搜索中…",
     ]
 }

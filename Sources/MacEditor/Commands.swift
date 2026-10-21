@@ -62,6 +62,12 @@ struct EditorCommands: Commands {
                 .keyboardShortcut("g", modifiers: [.command, .shift])
             Button(t("useSelection")) { sendFinderAction(.setSearchString) }
                 .keyboardShortcut("e", modifiers: .command)
+            Button(t("findInFiles")) {
+                ui?.showSidebar = true
+                ui?.showFindInFiles = true
+            }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .disabled(ui == nil)
             Divider()
             Button(t("goToLine")) { ui?.showGoToLine = true }
                 .keyboardShortcut("l", modifiers: .command)

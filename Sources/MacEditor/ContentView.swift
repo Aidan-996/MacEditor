@@ -60,6 +60,9 @@ struct ContentView: View {
         .sheet(isPresented: $ui.showGoToLine) {
             GoToLineSheet(ui: ui, maxLine: ui.lineCount)
         }
+        .sheet(isPresented: $ui.showFindInFiles) {
+            FindInFilesSheet(ui: ui, theme: theme)
+        }
         .focusedSceneValue(\.softWrap, $ui.softWrap)
         .focusedSceneValue(\.showPreview, $ui.showPreview)
         .focusedSceneValue(\.uiState, ui)
@@ -90,8 +93,7 @@ struct ContentView: View {
                 editor
             }
             Rectangle().fill(theme.swiftUI(\.separator)).frame(height: 1)
-            StatusBar(ui: ui, theme: theme, language: language,
-                      encoding: document.encoding.displayName, lineEnding: document.lineEnding.rawValue)
+            StatusBar(ui: ui, theme: theme, language: language, document: $document)
         }
         .background(theme.swiftUI(\.background))
     }
@@ -146,9 +148,19 @@ struct StatusBar: View {
     @ObservedObject var ui: EditorUIState
     let theme: Theme
     let language: Language
-    let encoding: String
-    let lineEnding: String
+    @Binding var document: TextDocument
     @AppStorage("uiLanguage") private var uiLanguage: String = "system"
+
+    private func t(_ key: String) -> String { L10n.t(key, uiLanguage) }
+
+    private var encodingChoices: [(String, String.Encoding)] {
+        [
+            (t("encUTF8"), .utf8),
+            (t("encGB18030"), .gb18030),
+            (t("encISO88591"), .isoLatin1),
+            (t("encUTF16"), .utf16LittleEndian),
+        ]
+    }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -156,8 +168,8 @@ struct StatusBar: View {
             Text(L10n.f("counts", uiLanguage, ui.wordCount, ui.charCount))
             Spacer()
             Text(L10n.t(ui.softWrap ? "wrap" : "noWrap", uiLanguage))
-            Text(encoding)
-            Text(lineEnding)
+            encodingMenu
+            Text(document.lineEnding.rawValue)
             Menu {
                 Button((ui.languageOverride == nil ? "✓ " : "") + L10n.t("autoDetect", uiLanguage)) {
                     ui.languageOverride = nil
@@ -180,6 +192,32 @@ struct StatusBar: View {
         .padding(.horizontal, 12)
         .frame(height: 24)
         .background(theme.swiftUI(\.chrome))
+    }
+
+    private var encodingMenu: some View {
+        Menu {
+            Text(t("reopenWithEncoding"))
+            Divider()
+            ForEach(encodingChoices, id: \.0) { item in
+                let selected = document.encoding.displayName == item.1.displayName
+                    || (document.encoding == item.1)
+                Button((selected ? "✓ " : "") + item.0) {
+                    reopen(as: item.1)
+                }
+            }
+        } label: {
+            Text(document.encoding.displayName)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(t("encoding"))
+    }
+
+    private func reopen(as encoding: String.Encoding) {
+        document.reopen(with: encoding, fileURL: ui.fileURL)
+        ui.updateCounts(document.text, immediate: true)
+        ui.scheduleDetect(document.text, immediate: true)
     }
 }
 
