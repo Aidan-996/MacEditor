@@ -21,6 +21,7 @@ enum Language: String, CaseIterable {
         case "html", "htm", "xml", "xhtml", "svg", "plist": return .html
         case "css", "scss", "less": return .css
         case "sh", "bash", "zsh", "command": return .shell
+        case "csv", "tsv", "txt", "log", "text": return .plain
         default: return .plain
         }
     }

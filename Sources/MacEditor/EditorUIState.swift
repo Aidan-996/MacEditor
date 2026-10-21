@@ -7,23 +7,91 @@ final class EditorUIState: ObservableObject {
     @Published var softWrap: Bool = UserDefaults.standard.object(forKey: "softWrapDefault") as? Bool ?? true
     @Published var showPreview = true
     @Published var showSidebar = !WorkspaceStore.shared.roots.isEmpty
+    @Published var showOutline = false
     @Published var showGoToLine = false
+    @Published var showFindInFiles = false
+    @Published var showInvisibles = false
+    @Published var showIndentGuides: Bool = UserDefaults.standard.object(forKey: "showIndentGuides") as? Bool ?? true
     @Published var cursor = CursorPosition()
     /// nil = automatic (extension, then content sniffing)
     @Published var languageOverride: Language? = nil
     @Published var detectedLanguage: Language = .plain
     @Published var wordCount = 0
     @Published var charCount = 0
+    @Published var outlineItems: [OutlineItem] = []
+    /// "2/5" style find match status; empty when no find string.
+    @Published var findMatchLabel = ""
 
     private var countWork: DispatchWorkItem?
+    private var outlineWork: DispatchWorkItem?
+    private var findWork: DispatchWorkItem?
+    private let fileWatcher = DocumentFileWatcher()
+    private var reloadPromptVisible = false
+
     /// Set by ⇧⌘O when no window was open; the next window shows its sidebar.
     static var pendingShowSidebar = false
+    /// Open document then jump to line (Find in Files).
+    static var pendingGoTo: (url: URL, line: Int)?
 
-    weak var textView: CodeTextView?
-    var fileURL: URL?
+    weak var textView: CodeTextView? {
+        didSet { textView?.editorUI = self }
+    }
+    var fileURL: URL? {
+        didSet { setupWatcher() }
+    }
     var currentLanguage: Language = .plain
+    /// Binding setter used when external reload replaces document text.
+    var applyReloadedText: ((String, String.Encoding, LineEnding, Data) -> Void)?
+    var noteDocumentSaved: (() -> Void)?
 
     private var detectWork: DispatchWorkItem?
+
+    init() {
+        fileWatcher.onChanged = { [weak self] in
+            self?.handleExternalChange()
+        }
+    }
+
+    private func setupWatcher() {
+        fileWatcher.noteLocalSave()
+        fileWatcher.watch(url: fileURL)
+    }
+
+    func noteLocalSave() {
+        fileWatcher.noteLocalSave()
+    }
+
+    private func handleExternalChange() {
+        guard let url = fileURL, !reloadPromptVisible else { return }
+        reloadPromptVisible = true
+        let alert = NSAlert()
+        alert.messageText = L10n.t("fileChangedTitle")
+        alert.informativeText = L10n.f("fileChangedBody", L10n.currentPreference, url.lastPathComponent)
+        alert.addButton(withTitle: L10n.t("reload"))
+        alert.addButton(withTitle: L10n.t("keepEditing"))
+        let response = alert.runModal()
+        reloadPromptVisible = false
+        if response == .alertFirstButtonReturn {
+            reloadFromDisk()
+        } else {
+            // Keep watching; user may save over later
+            fileWatcher.watch(url: url)
+        }
+    }
+
+    func reloadFromDisk() {
+        guard let url = fileURL, let data = try? Data(contentsOf: url) else { return }
+        let (decoded, enc) = TextDocument.decode(data, pathExtension: url.pathExtension)
+        let normalized = TextDocument.normalizeLineEndings(decoded)
+        applyReloadedText?(normalized.text, enc, normalized.ending, data)
+        fileWatcher.noteLocalSave()
+        fileWatcher.watch(url: url)
+        if let tv = textView {
+            tv.rebuildFolds()
+        }
+        scheduleOutline(normalized.text, language: currentLanguage, immediate: true)
+        updateCounts(normalized.text, immediate: true)
+    }
 
     /// Debounced language sniffing.
     func scheduleDetect(_ text: String, immediate: Bool = false) {
@@ -50,6 +118,36 @@ final class EditorUIState: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + (immediate ? 0 : 0.25), execute: work)
     }
 
+    func scheduleOutline(_ text: String, language: Language, immediate: Bool = false) {
+        outlineWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            let items = OutlineBuilder.build(text: text, language: language)
+            if self.outlineItems != items { self.outlineItems = items }
+        }
+        outlineWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (immediate ? 0 : 0.5), execute: work)
+    }
+
+    func updateFindMatchStatus(text: String, caret: Int) {
+        findWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            guard let q = FindMatchCounter.findPasteboardString() else {
+                if !self.findMatchLabel.isEmpty { self.findMatchLabel = "" }
+                return
+            }
+            if let (cur, total) = FindMatchCounter.status(in: text, query: q, caret: caret) {
+                let label = L10n.f("findMatch", L10n.currentPreference, cur, total)
+                if self.findMatchLabel != label { self.findMatchLabel = label }
+            } else {
+                if !self.findMatchLabel.isEmpty { self.findMatchLabel = "" }
+            }
+        }
+        findWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
     func chooseFolder() {
         if WorkspaceStore.shared.chooseFolders() { showSidebar = true }
     }
@@ -70,6 +168,16 @@ final class EditorUIState: ObservableObject {
         tv.scrollRangeToVisible(target)
         let lineRange = ns.lineRange(for: target)
         if lineRange.length > 0 { tv.showFindIndicator(for: lineRange) }
+    }
+
+    func consumePendingGoTo(matching url: URL?) {
+        guard let pending = EditorUIState.pendingGoTo else { return }
+        guard let url, pending.url.standardizedFileURL == url.standardizedFileURL else { return }
+        EditorUIState.pendingGoTo = nil
+        let line = pending.line
+        DispatchQueue.main.async { [weak self] in
+            self?.goTo(line: line)
+        }
     }
 
     var lineCount: Int {
@@ -94,6 +202,13 @@ final class EditorUIState: ObservableObject {
             alert.addButton(withTitle: L10n.t("ok"))
             alert.runModal()
         }
+    }
+
+    func syncEditorChrome() {
+        guard let tv = textView else { return }
+        tv.showInvisibles = showInvisibles
+        tv.showIndentGuides = showIndentGuides
+        tv.needsDisplay = true
     }
 }
 

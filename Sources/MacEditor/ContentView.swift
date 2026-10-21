@@ -9,6 +9,7 @@ struct ContentView: View {
     @AppStorage("tabWidth") private var tabWidth: Int = 4
     @AppStorage("theme") private var themePreference: String = "auto"
     @AppStorage("uiLanguage") private var uiLanguage: String = "system"
+    @AppStorage("showIndentGuides") private var showIndentGuidesPref: Bool = true
     @Environment(\.colorScheme) private var colorScheme
     @StateObject private var ui = EditorUIState()
 
@@ -33,6 +34,10 @@ struct ContentView: View {
                     .frame(minWidth: 160, idealWidth: 220, maxWidth: 400)
             }
             mainArea.frame(minWidth: 360)
+            if ui.showOutline {
+                OutlineView(ui: ui, theme: theme)
+                    .frame(minWidth: 140, idealWidth: 180, maxWidth: 320)
+            }
         }
         .background(WindowConfigurator(background: theme.ns(\.chrome)))
         .frame(minWidth: 520, minHeight: 320)
@@ -45,6 +50,10 @@ struct ContentView: View {
                 .help(t("sidebarHelp"))
             }
             ToolbarItemGroup(placement: .primaryAction) {
+                Button { ui.showOutline.toggle() } label: {
+                    Label(t("outline"), systemImage: "list.bullet.indent")
+                }
+                .help(t("outlineHelp"))
                 Button { ui.softWrap.toggle() } label: {
                     Label(t("softWrap"), systemImage: ui.softWrap ? "text.alignleft" : "arrow.right.to.line")
                 }
@@ -60,23 +69,48 @@ struct ContentView: View {
         .sheet(isPresented: $ui.showGoToLine) {
             GoToLineSheet(ui: ui, maxLine: ui.lineCount)
         }
+        .sheet(isPresented: $ui.showFindInFiles) {
+            FindInFilesSheet(ui: ui, theme: theme)
+        }
         .focusedSceneValue(\.softWrap, $ui.softWrap)
         .focusedSceneValue(\.showPreview, $ui.showPreview)
         .focusedSceneValue(\.uiState, ui)
         .onAppear {
             ui.fileURL = fileURL
+            ui.showIndentGuides = showIndentGuidesPref
+            ui.applyReloadedText = { text, enc, ending, data in
+                document.text = text
+                document.encoding = enc
+                document.lineEnding = ending
+                document.originalData = data
+            }
             if EditorUIState.pendingShowSidebar {
                 EditorUIState.pendingShowSidebar = false
                 ui.showSidebar = true
             }
             ui.scheduleDetect(document.text, immediate: true)
             ui.updateCounts(document.text, immediate: true)
+            ui.scheduleOutline(document.text, language: language, immediate: true)
+            ui.consumePendingGoTo(matching: fileURL)
         }
         .onChange(of: document.text) { newValue in
             if extensionLanguage == .plain { ui.scheduleDetect(newValue) }
             ui.updateCounts(newValue)
+            ui.scheduleOutline(newValue, language: language)
         }
-        .onChange(of: fileURL) { newValue in ui.fileURL = newValue }
+        .onChange(of: fileURL) { newValue in
+            ui.fileURL = newValue
+            ui.consumePendingGoTo(matching: newValue)
+        }
+        .onChange(of: language) { newValue in
+            ui.currentLanguage = newValue
+            ui.scheduleOutline(document.text, language: newValue, immediate: true)
+        }
+        .onChange(of: ui.showIndentGuides) { newValue in
+            showIndentGuidesPref = newValue
+            ui.syncEditorChrome()
+        }
+        .onChange(of: ui.showInvisibles) { _ in ui.syncEditorChrome() }
     }
 
     private var mainArea: some View {
@@ -90,18 +124,63 @@ struct ContentView: View {
                 editor
             }
             Rectangle().fill(theme.swiftUI(\.separator)).frame(height: 1)
-            StatusBar(ui: ui, theme: theme, language: language,
-                      encoding: document.encoding.displayName, lineEnding: document.lineEnding.rawValue)
+            StatusBar(ui: ui, theme: theme, language: language, document: $document)
         }
         .background(theme.swiftUI(\.background))
     }
 
     private var editor: some View {
         let state = ui
-        return EditorTextView(text: $document.text, language: language, theme: theme, fontSize: CGFloat(fontSize),
-                              tabWidth: tabWidth, softWrap: ui.softWrap, ui: state)
-            .onAppear { state.currentLanguage = language }
-            .onChange(of: language) { newValue in state.currentLanguage = newValue }
+        return EditorTextView(
+            text: $document.text,
+            language: language,
+            theme: theme,
+            fontSize: CGFloat(fontSize),
+            tabWidth: tabWidth,
+            softWrap: ui.softWrap,
+            showInvisibles: ui.showInvisibles,
+            showIndentGuides: ui.showIndentGuides,
+            ui: state
+        )
+        .onAppear { state.currentLanguage = language }
+        .onChange(of: language) { newValue in state.currentLanguage = newValue }
+    }
+}
+
+struct OutlineView: View {
+    @ObservedObject var ui: EditorUIState
+    let theme: Theme
+    @AppStorage("uiLanguage") private var uiLanguage: String = "system"
+
+    private func t(_ key: String) -> String { L10n.t(key, uiLanguage) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(t("outline").uppercased())
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            if ui.outlineItems.isEmpty {
+                Text(t("outlineEmpty"))
+                    .foregroundColor(.secondary)
+                    .padding(.top, 20)
+                Spacer()
+            } else {
+                List(ui.outlineItems) { item in
+                    Text(String(repeating: "  ", count: item.depth) + item.title)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                        .contentShape(Rectangle())
+                        .onTapGesture { ui.goTo(line: item.line) }
+                }
+                .listStyle(.sidebar)
+            }
+        }
+        .background(theme.swiftUI(\.chrome))
     }
 }
 
@@ -146,18 +225,31 @@ struct StatusBar: View {
     @ObservedObject var ui: EditorUIState
     let theme: Theme
     let language: Language
-    let encoding: String
-    let lineEnding: String
+    @Binding var document: TextDocument
     @AppStorage("uiLanguage") private var uiLanguage: String = "system"
+
+    private func t(_ key: String) -> String { L10n.t(key, uiLanguage) }
+
+    private var encodingChoices: [(String, String.Encoding)] {
+        [
+            (t("encUTF8"), .utf8),
+            (t("encGB18030"), .gb18030),
+            (t("encISO88591"), .isoLatin1),
+            (t("encUTF16"), .utf16LittleEndian),
+        ]
+    }
 
     var body: some View {
         HStack(spacing: 14) {
             Text(L10n.f("lnCol", uiLanguage, ui.cursor.line, ui.cursor.column))
             Text(L10n.f("counts", uiLanguage, ui.wordCount, ui.charCount))
+            if !ui.findMatchLabel.isEmpty {
+                Text(ui.findMatchLabel)
+            }
             Spacer()
             Text(L10n.t(ui.softWrap ? "wrap" : "noWrap", uiLanguage))
-            Text(encoding)
-            Text(lineEnding)
+            encodingMenu
+            Text(document.lineEnding.rawValue)
             Menu {
                 Button((ui.languageOverride == nil ? "✓ " : "") + L10n.t("autoDetect", uiLanguage)) {
                     ui.languageOverride = nil
@@ -180,6 +272,33 @@ struct StatusBar: View {
         .padding(.horizontal, 12)
         .frame(height: 24)
         .background(theme.swiftUI(\.chrome))
+    }
+
+    private var encodingMenu: some View {
+        Menu {
+            Text(t("reopenWithEncoding"))
+            Divider()
+            ForEach(encodingChoices, id: \.0) { item in
+                let selected = document.encoding.displayName == item.1.displayName
+                    || (document.encoding == item.1)
+                Button((selected ? "✓ " : "") + item.0) {
+                    reopen(as: item.1)
+                }
+            }
+        } label: {
+            Text(document.encoding.displayName)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(t("encoding"))
+    }
+
+    private func reopen(as encoding: String.Encoding) {
+        document.reopen(with: encoding, fileURL: ui.fileURL)
+        ui.updateCounts(document.text, immediate: true)
+        ui.scheduleDetect(document.text, immediate: true)
+        ui.scheduleOutline(document.text, language: language, immediate: true)
     }
 }
 
