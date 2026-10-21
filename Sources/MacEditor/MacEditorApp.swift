@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Needed when launched via `swift run` (no bundle): make it a regular foreground app.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        WindowDoubleClick.install()
         NSDocumentController.shared.autosavingDelay = 5   // NSDocument autosave-in-place / crash recovery
 
         autosaveTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in

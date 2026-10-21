@@ -113,10 +113,14 @@ struct FileTreeView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(t("workspace").uppercased())
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.secondary)
-                Spacer()
+                HStack {
+                    Text(t("workspace").uppercased())
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .frame(maxHeight: .infinity)
+                .background(DoubleClickZoomZone())
                 Button { ui.chooseFolder() } label: { Image(systemName: "plus") }
                     .buttonStyle(.borderless)
                     .help(t("addFolder"))
@@ -125,11 +129,11 @@ struct FileTreeView: View {
             .frame(height: 28)
 
             if store.roots.isEmpty {
-                Spacer()
+                Color.clear.background(DoubleClickZoomZone())
                 Text(t("noFolder")).foregroundColor(.secondary)
                 Button(t("chooseFolder")) { ui.chooseFolder() }
                     .padding(.top, 6)
-                Spacer()
+                Color.clear.background(DoubleClickZoomZone())
             } else {
                 List {
                     ForEach(store.roots) { root in
