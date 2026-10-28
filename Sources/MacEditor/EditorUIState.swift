@@ -42,14 +42,35 @@ final class EditorUIState: ObservableObject {
     var currentLanguage: Language = .plain
     /// Binding setter used when external reload replaces document text.
     var applyReloadedText: ((String, String.Encoding, LineEnding, Data) -> Void)?
-    var noteDocumentSaved: (() -> Void)?
 
     private var detectWork: DispatchWorkItem?
+    private var saveObserver: NSObjectProtocol?
 
     init() {
         fileWatcher.onChanged = { [weak self] in
             self?.handleExternalChange()
         }
+        // Our own saves go through TextDocument.fileWrapper(configuration:), which has no
+        // window to target directly, so it broadcasts instead; every window's watcher
+        // snoozes itself so a save doesn't trigger its own "changed on disk" prompt.
+        saveObserver = NotificationCenter.default.addObserver(
+            forName: .documentWillWrite, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.fileWatcher.noteLocalSave()
+            // NSDocument saves atomically (write to a temp file, then replace), which
+            // retargets the path to a new inode. Our watch is a kqueue on the old file
+            // descriptor, so without reopening it here, the watch goes dead after the
+            // very first save and later external edits would stop being detected.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self, let url = self.fileURL else { return }
+                self.fileWatcher.watch(url: url)
+            }
+        }
+    }
+
+    deinit {
+        if let saveObserver { NotificationCenter.default.removeObserver(saveObserver) }
     }
 
     private func setupWatcher() {

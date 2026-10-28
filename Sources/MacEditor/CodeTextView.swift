@@ -314,14 +314,23 @@ final class CodeTextView: NSTextView {
         let full = NSRange(location: 0, length: ns.length)
         guard full.length > 0 else { return }
         let fullGlyphs = lm.glyphRange(forCharacterRange: full, actualCharacterRange: nil)
-        lm.setNotShownAttribute(false, forGlyphRange: fullGlyphs)
+        setNotShown(false, in: fullGlyphs, layoutManager: lm)
         for region in foldRegions where foldedHeaders.contains(region.startLine) {
             let gr = lm.glyphRange(forCharacterRange: region.hiddenRange, actualCharacterRange: nil)
             if gr.length > 0 {
-                lm.setNotShownAttribute(true, forGlyphRange: gr)
+                setNotShown(true, in: gr, layoutManager: lm)
             }
         }
         lm.invalidateLayout(forCharacterRange: full, actualCharacterRange: nil)
+    }
+
+    /// `NSLayoutManager.setNotShownAttribute` only takes a single glyph index
+    /// (`forGlyphAt:`), not a range, so toggling a whole region means looping.
+    private func setNotShown(_ flag: Bool, in glyphRange: NSRange, layoutManager lm: NSLayoutManager) {
+        guard glyphRange.length > 0 else { return }
+        for g in glyphRange.location..<NSMaxRange(glyphRange) {
+            lm.setNotShownAttribute(flag, forGlyphAt: g)
+        }
     }
 
     @objc func foldCurrent(_ sender: Any?) {

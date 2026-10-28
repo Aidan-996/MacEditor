@@ -52,6 +52,7 @@
 
 ```bash
 swift run                 # 直接运行（调试用，没有 .app 包）
+swift test                # 跑单元测试（Swift Testing，覆盖折叠/大纲/编码探测等纯逻辑）
 ./build_app.sh            # 生成 build/MacEditor.app（含 Info.plist、图标、ad-hoc 签名）
 ./build_dmg.sh            # 生成 dist/MacEditor-1.0.0.dmg（能做通用二进制就做，否则构建本机架构）
 open Package.swift        # 如果装了 Xcode，也可以用 Xcode 打开
@@ -73,6 +74,7 @@ open Package.swift        # 如果装了 Xcode，也可以用 Xcode 打开
 MacEditor/
 ├── Package.swift / build_app.sh / build_dmg.sh
 ├── Resources/Info.plist, AppIcon.png
+├── Tests/MacEditorTests/     # Swift Testing（折叠/大纲/编码探测/字数统计等纯逻辑）
 └── Sources/MacEditor/
     ├── MacEditorApp.swift        # 入口、DocumentGroup、AppDelegate（标签页、自动保存）
     ├── Commands.swift            # 菜单命令（FocusedValue）

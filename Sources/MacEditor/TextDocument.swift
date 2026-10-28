@@ -7,6 +7,14 @@ enum LineEnding: String {
     case crlf = "CRLF"
 }
 
+extension Notification.Name {
+    /// Posted right before a document's bytes are handed to the save pipeline, so every
+    /// window's external-change watcher can snooze itself and not mistake our own save
+    /// for an outside edit. `fileWrapper(configuration:)` has no file URL to target a
+    /// specific window, so this is broadcast; each watcher only cares about a ~1s window.
+    static let documentWillWrite = Notification.Name("MacEditor.documentWillWrite")
+}
+
 extension String.Encoding {
     static let gb18030 = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(
         CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))
@@ -179,33 +187,50 @@ struct TextDocument: FileDocument {
     }
 
     /// True when byte pairs look like GBK/GB18030 more than UTF-8.
+    ///
+    /// This only runs when both strict UTF-8 and GB18030 already decoded the whole
+    /// buffer successfully, so most callers here hand it genuinely-valid UTF-8 bytes.
+    /// It must skip every well-formed multi-byte UTF-8 sequence before looking for
+    /// GBK-style lead/trail pairs in what's left — otherwise ordinary 3-byte UTF-8
+    /// CJK text (the common case: 你, 好, 世, 界 are each E0–EF lead + two 0x80–0xBF
+    /// continuation bytes) gets misread as "GBK-looking" and this heuristic steers
+    /// valid UTF-8 into a GB18030 mis-decode. See `validUTF8CJKDecodesAsUTF8NotGB18030`.
     private static func gbkByteDensity(_ data: Data) -> Double {
         guard !data.isEmpty else { return 0 }
         var hits = 0
         var i = 0
         let bytes = [UInt8](data.prefix(8192))
-        while i < bytes.count {
+        let n = bytes.count
+        while i < n {
+            if let len = utf8SequenceLength(bytes, at: i, count: n) {
+                i += len
+                continue
+            }
             let b = bytes[i]
             // GBK lead byte 0x81–0xFE, trail 0x40–0x7E or 0x80–0xFE
-            if b >= 0x81 && b <= 0xFE, i + 1 < bytes.count {
+            if b >= 0x81 && b <= 0xFE, i + 1 < n {
                 let t = bytes[i + 1]
                 if (t >= 0x40 && t <= 0x7E) || (t >= 0x80 && t <= 0xFE) {
-                    // UTF-8 never uses 0x80–0xBF as a lead; a high lead+trail pair
-                    // that is not a well-formed UTF-8 2/3-byte sequence counts as GBK-ish.
-                    if !isUTF8LeadTrail(b, t) { hits += 2 }
+                    hits += 2
                     i += 2
                     continue
                 }
             }
             i += 1
         }
-        return Double(hits) / Double(max(bytes.count, 1))
+        return Double(hits) / Double(max(n, 1))
     }
 
-    private static func isUTF8LeadTrail(_ b: UInt8, _ t: UInt8) -> Bool {
-        // 2-byte UTF-8: 110xxxxx 10xxxxxx
-        if b >= 0xC2 && b <= 0xDF { return (t & 0xC0) == 0x80 }
-        return false
+    /// Byte length (2, 3 or 4) of a well-formed UTF-8 sequence starting at `i`, when
+    /// every continuation byte checks out; nil otherwise (including plain ASCII,
+    /// which the caller advances past one byte at a time).
+    private static func utf8SequenceLength(_ bytes: [UInt8], at i: Int, count n: Int) -> Int? {
+        let b = bytes[i]
+        func isCont(_ idx: Int) -> Bool { idx < n && (bytes[idx] & 0xC0) == 0x80 }
+        if b >= 0xC2 && b <= 0xDF, isCont(i + 1) { return 2 }
+        if b >= 0xE0 && b <= 0xEF, isCont(i + 1), isCont(i + 2) { return 3 }
+        if b >= 0xF0 && b <= 0xF4, isCont(i + 1), isCont(i + 2), isCont(i + 3) { return 4 }
+        return nil
     }
 
     private static func cjkRatio(_ s: String) -> Double {
@@ -267,6 +292,7 @@ struct TextDocument: FileDocument {
         var out = text
         if lineEnding == .crlf { out = out.replacingOccurrences(of: "\n", with: "\r\n") }
         let data = out.data(using: encoding) ?? Data(out.utf8)
+        NotificationCenter.default.post(name: .documentWillWrite, object: nil)
         return FileWrapper(regularFileWithContents: data)
     }
 }

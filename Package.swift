@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [.executable(name: "MacEditor", targets: ["MacEditor"])],
     targets: [
-        .executableTarget(name: "MacEditor", path: "Sources/MacEditor")
+        .executableTarget(name: "MacEditor", path: "Sources/MacEditor"),
+        .testTarget(name: "MacEditorTests", dependencies: ["MacEditor"], path: "Tests/MacEditorTests"),
     ]
 )

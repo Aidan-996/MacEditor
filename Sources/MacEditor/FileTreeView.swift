@@ -90,7 +90,7 @@ final class WorkspaceWatcher {
             FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes)
         )
         guard let stream else { return }
-        FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
         FSEventStreamStart(stream)
     }
 
